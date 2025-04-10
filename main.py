@@ -1,105 +1,123 @@
-import wave
-import numpy as np
+import tkinter as tk
+from tkinter import ttk, messagebox
 import os
+import time
+import threading
+from service import hide_message, extract_message, INPUT_DIR, OUTPUT_DIR
 
-INPUT_DIR = "template/input"
-OUTPUT_DIR = "template/output"
+class SteganographyApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Стеганография в WAV")
+        self.root.geometry("700x500")
 
+        # Основной фрейм
+        main_frame = ttk.Frame(root, padding="10")
+        main_frame.grid(row=0, column=0, sticky="nsew")
 
-def hide_message(input_wav_path, output_wav_path, message):
-    # Чтение WAV-файла
-    with wave.open(input_wav_path, 'rb') as wav:
-        params = wav.getparams()
-        print(f"Параметры файла {input_wav_path}: {params}")
-        if params.sampwidth != 2:
-            raise ValueError(f"Файл {input_wav_path} не в формате 16 бит!")
-        frames = wav.readframes(wav.getnframes())
-        samples = np.frombuffer(frames, dtype=np.int16)
+        # Поле ввода сообщения
+        ttk.Label(main_frame, text="Введите сообщение для шифрования:").grid(row=0, column=0, sticky="w", pady=5)
+        self.message_entry = ttk.Entry(main_frame, width=50)
+        self.message_entry.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
 
-    # Проверка диапазона сэмплов
-    print(f"Исходные сэмплы: min={np.min(samples)}, max={np.max(samples)}")
-    if np.max(samples) > 32767 or np.min(samples) < -32768:
-        raise ValueError(f"Сэмплы в {input_wav_path} вне диапазона int16!")
+        # Кнопки
+        ttk.Button(main_frame, text="Зашифровать", command=self.encrypt).grid(row=2, column=0, pady=10, padx=5)
+        ttk.Button(main_frame, text="Расшифровать", command=self.decrypt).grid(row=2, column=1, pady=10, padx=5)
 
-    # Подготовка сообщения
-    message += '\0'  # Добавляем завершающий символ
-    bits = ''.join(format(ord(char), '08b') for char in message)
-    if len(bits) > len(samples):
-        raise ValueError(f"Сообщение слишком длинное для файла {input_wav_path}!")
+        # Поле вывода логов
+        ttk.Label(main_frame, text="Логи:").grid(row=3, column=0, sticky="w", pady=5)
+        self.log_text = tk.Text(main_frame, height=15, width=80)
+        self.log_text.grid(row=4, column=0, columnspan=2, sticky="nsew")
 
-    # Модификация сэмплов
-    modified_samples = samples.copy().astype(np.int16)
-    for i, bit in enumerate(bits):
-        original_sample = modified_samples[i]
-        # Обнуляем младший бит с помощью знаковой маски
-        cleared_lsb = original_sample & np.int16(-2)  # -2 = 0xFFFE в int16
-        # Добавляем новый бит
-        new_bit = np.int16(int(bit))  # 0 или 1
-        modified_sample = cleared_lsb | new_bit
+        # Время выполнения
+        ttk.Label(main_frame, text="Время выполнения:").grid(row=5, column=0, sticky="w", pady=5)
+        self.time_label = ttk.Label(main_frame, text="0.00 сек")
+        self.time_label.grid(row=5, column=1, sticky="w")
 
-        # Отладочная информация для первых 5 сэмплов
-        if i < 5:
-            print(f"Сэмпл {i}: исходное={original_sample}, cleared_lsb={cleared_lsb}, bit={new_bit}, результат={modified_sample}")
+        # Настройка растяжения
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(4, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
 
-        # Проверка на переполнение
-        if modified_sample > 32767 or modified_sample < -32768:
-            raise ValueError(f"Переполнение int16 на сэмпле {i}: {modified_sample}")
-        modified_samples[i] = modified_sample
+        # Загрузочное окно
+        self.loading_window = None
 
-    print(f"Изменённые сэмплы: min={np.min(modified_samples)}, max={np.max(modified_samples)}")
+    def log(self, message):
+        self.log_text.insert(tk.END, f"{message}\n")
+        self.log_text.see(tk.END)
 
-    # Запись результата
-    with wave.open(output_wav_path, 'wb') as wav_out:
-        wav_out.setparams(params)
-        wav_out.writeframes(modified_samples.tobytes())
+    def show_loading(self, message):
+        self.loading_window = tk.Toplevel(self.root)
+        self.loading_window.title("Пожалуйста, подождите")
+        self.loading_window.geometry("300x100")
+        self.loading_window.transient(self.root)
+        self.loading_window.grab_set()
 
-def extract_message(input_wav_path):
-    with wave.open(input_wav_path, 'rb') as wav:
-        frames = wav.readframes(wav.getnframes())
-        samples = np.frombuffer(frames, dtype=np.int16)
+        ttk.Label(self.loading_window, text=message).pack(pady=20)
+        progress = ttk.Progressbar(self.loading_window, mode="indeterminate")
+        progress.pack(pady=10)
+        progress.start()
 
-    bits = ''
-    for i in range(len(samples)):
-        bits += str(samples[i] & 1)
+    def hide_loading(self):
+        if self.loading_window:
+            self.loading_window.destroy()
+            self.loading_window = None
 
-    message = ''
-    for i in range(0, len(bits), 8):
-        byte = bits[i:i + 8]
-        if len(byte) == 8:
-            char = chr(int(byte, 2))
-            if char == '\0':
-                break
-            message += char
-    return message
+    def encrypt(self):
+        message = self.message_entry.get()
+        if not message:
+            messagebox.showerror("Ошибка", "Введите сообщение!")
+            return
 
+        self.log_text.delete(1.0, tk.END)
+        self.time_label.config(text="0.00 сек")
+        self.show_loading("Шифрование...")
 
-def main():
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-
-    secret_message = "Hello, this is a secret!"
-
-    print("Шифрование сообщения в WAV-файлы...")
-    for filename in os.listdir(INPUT_DIR):
-        if filename.endswith(".wav"):
-            input_wav_path = os.path.join(INPUT_DIR, filename)
-            output_wav_path = os.path.join(OUTPUT_DIR, f"encoded_{filename}")
+        def encrypt_thread():
+            start_time = time.time()
             try:
-                hide_message(input_wav_path, output_wav_path, secret_message)
-                print(f"Сообщение спрятано в {output_wav_path}")
-            except Exception as e:
-                print(f"Ошибка при обработке {filename}: {e}")
+                if not os.path.exists(OUTPUT_DIR):
+                    os.makedirs(OUTPUT_DIR)
 
-    print("\nИзвлечение сообщения из WAV-файлов...")
-    for filename in os.listdir(OUTPUT_DIR):
-        if filename.endswith(".wav"):
-            wav_path = os.path.join(OUTPUT_DIR, filename)
+                for filename in os.listdir(INPUT_DIR):
+                    if filename.endswith(".wav"):
+                        input_wav_path = os.path.join(INPUT_DIR, filename)
+                        output_wav_path = os.path.join(OUTPUT_DIR, f"encoded_{filename}")
+                        hide_message(input_wav_path, output_wav_path, message)
+                        self.log(f"Сообщение спрятано в {output_wav_path}")
+            except Exception as e:
+                self.log(f"Ошибка при шифровании: {e}")
+            finally:
+                elapsed_time = time.time() - start_time
+                self.root.after(0, lambda: self.time_label.config(text=f"{elapsed_time:.2f} сек"))
+                self.root.after(0, self.hide_loading)
+
+        threading.Thread(target=encrypt_thread, daemon=True).start()
+
+    def decrypt(self):
+        self.log_text.delete(1.0, tk.END)
+        self.time_label.config(text="0.00 сек")
+        self.show_loading("Дешифрование...")
+
+        def decrypt_thread():
+            start_time = time.time()
             try:
-                extracted = extract_message(wav_path)
-                print(f"Извлечённое сообщение из {filename}: {extracted}")
+                for filename in os.listdir(OUTPUT_DIR):
+                    if filename.endswith(".wav"):
+                        wav_path = os.path.join(OUTPUT_DIR, filename)
+                        extracted = extract_message(wav_path)
+                        self.log(f"Извлечённое сообщение из {filename}: {extracted}")
             except Exception as e:
-                print(f"Ошибка при извлечении из {filename}: {e}")
+                self.log(f"Ошибка при дешифровании: {e}")
+            finally:
+                elapsed_time = time.time() - start_time
+                self.root.after(0, lambda: self.time_label.config(text=f"{elapsed_time:.2f} сек"))
+                self.root.after(0, self.hide_loading)
 
+        threading.Thread(target=decrypt_thread, daemon=True).start()
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = SteganographyApp(root)
+    root.mainloop()

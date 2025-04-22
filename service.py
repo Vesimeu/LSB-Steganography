@@ -6,11 +6,13 @@ INPUT_DIR = "template/input"
 OUTPUT_DIR = "template/output"
 LOG_FILE = "log_simple.txt"
 
+
 def log_sample_info(i, original_sample, cleared_bits, new_bits, modified_sample):
     """Запись информации о сэмплах в лог-файл."""
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(
-            f"Сэмпл {i}: исходное={original_sample}, cleared_bits={cleared_bits}, bit={new_bits}, результат={modified_sample}\n")
+            f"Сэмпл {i}: исходное={original_sample}, cleared_bits={cleared_bits}, new_bits={new_bits}, результат={modified_sample}\n")
+
 
 def read_txt_file(txt_path):
     """Чтение текста из .txt файла."""
@@ -19,6 +21,7 @@ def read_txt_file(txt_path):
             return f.read()
     except Exception as e:
         raise ValueError(f"Ошибка при чтении файла {txt_path}: {e}")
+
 
 def hide_message(input_wav_path, output_wav_path, message, num_bits=1):
     """Шифрование сообщения в WAV-файл с заменой num_bits младших битов."""
@@ -36,13 +39,19 @@ def hide_message(input_wav_path, output_wav_path, message, num_bits=1):
 
     # Проверка диапазона сэмплов
     print(f"Исходные сэмплы: min={np.min(samples)}, max={np.max(samples)}")
-    if np.max(samples) > 32767 or np.min(samples) < -32768:
+    if np.max(np.abs(samples)) > 32767:
         raise ValueError(f"Сэмплы в {input_wav_path} вне диапазона int16!")
 
     # Подготовка сообщения
     message += '\0'
     bits = ''.join(format(ord(char), '08b') for char in message)
     required_samples = len(bits) // num_bits + (1 if len(bits) % num_bits else 0)
+
+    # Проверка доступного количества символов
+    available_chars = (len(samples) * num_bits) // 8
+    if len(message) > available_chars:
+        raise ValueError(f"Сообщение слишком длинное! Максимум {available_chars} символов для {num_bits} битов.")
+
     if required_samples > len(samples):
         raise ValueError(f"Сообщение слишком длинное для файла {input_wav_path} с {num_bits} битами на сэмпл!")
 
@@ -58,12 +67,12 @@ def hide_message(input_wav_path, output_wav_path, message, num_bits=1):
         if bit_index >= len(bits):
             break
         original_sample = modified_samples[i]
-        mask = np.int16(-1 << num_bits)
+        mask = np.int16(~((1 << num_bits) - 1))
         cleared_bits = original_sample & mask
         new_bits = 0
-        for j in range(num_bits):
+        for j in range(num_bits - 1, -1, -1):
             if bit_index < len(bits):
-                new_bits = (new_bits << 1) | int(bits[bit_index])
+                new_bits |= (int(bits[bit_index]) << j)
                 bit_index += 1
             else:
                 break
@@ -99,8 +108,10 @@ def hide_message(input_wav_path, output_wav_path, message, num_bits=1):
         "mean_diff": mean_diff,
         "snr": snr,
         "changed_samples": changed_samples,
-        "changed_percent": changed_percent
+        "changed_percent": changed_percent,
+        "available_chars": available_chars
     }
+
 
 def extract_message(input_wav_path, num_bits=1):
     """Извлечение сообщения из WAV-файла с учётом num_bits."""
@@ -113,8 +124,7 @@ def extract_message(input_wav_path, num_bits=1):
 
     bits = ''
     for sample in samples:
-        # Извлекаем num_bits младших битов в правильном порядке
-        for j in range(num_bits - 1, -1, -1):  # От старшего к младшему
+        for j in range(num_bits - 1, -1, -1):
             bits += str((sample >> j) & 1)
 
     message = ''
@@ -127,6 +137,7 @@ def extract_message(input_wav_path, num_bits=1):
             message += char
     return message
 
+
 def get_wav_info(wav_path):
     """Получение информации о WAV-файле."""
     with wave.open(wav_path, 'rb') as wav:
@@ -138,12 +149,10 @@ def get_wav_info(wav_path):
 
         total_samples = nframes * nchannels
         total_bits = total_samples * sampwidth * 8
-        available_chars = total_samples // 8
 
     return {
         "total_samples": total_samples,
         "total_bits": total_bits,
-        "available_chars": available_chars,
         "nchannels": nchannels,
         "framerate": framerate,
         "duration": nframes / framerate

@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox, filedialog
 import os
 import time
 import threading
+import wave
+import numpy as np
 from service import hide_message, extract_message, INPUT_DIR, OUTPUT_DIR, get_wav_info, read_txt_file
 
 class SteganographyApp:
@@ -111,10 +113,12 @@ class SteganographyApp:
             self.selected_file = file_path
             self.selected_file_label.config(text=os.path.basename(file_path))
             info = get_wav_info(file_path)
+            num_bits = int(self.bits_combobox.get())
+            available_chars = (info['total_samples'] * num_bits) // 8
             self.log(f"File Info: {os.path.basename(file_path)}")
             self.log(f"  Samples: {info['total_samples']}")
             self.log(f"  Bits: {info['total_bits']}")
-            self.log(f"  Available Characters: {info['available_chars']}")
+            self.log(f"  Available Characters (for {num_bits} bits): {available_chars}")
             self.log(f"  Channels: {info['nchannels']}, Rate: {info['framerate']} Hz, Duration: {info['duration']:.2f} sec")
 
     def select_txt_file(self):
@@ -124,11 +128,11 @@ class SteganographyApp:
             self.txt_file_label.config(text=os.path.basename(file_path))
             self.log(f"Selected text file: {os.path.basename(file_path)}")
 
-    def get_quality_assessment(self, snr, changed_percent):
-        """Автоматическая оценка качества изменений."""
-        if snr > 40 and changed_percent < 5:
+    def get_quality_assessment(self, snr, changed_percent, num_bits):
+        """Автоматическая оценка качества изменений с учётом num_bits."""
+        if snr > 60 and changed_percent < 5 and num_bits <= 2:
             return "Незаметно"
-        elif snr > 30 or changed_percent < 10:
+        elif (snr > 40 and changed_percent < 10) or num_bits <= 4:
             return "Возможен лёгкий шум"
         else:
             return "Заметные искажения"
@@ -151,12 +155,6 @@ class SteganographyApp:
                 messagebox.showerror("Error", "Please enter a message or select a text file!")
                 return
 
-        # Проверка длины сообщения
-        info = get_wav_info(self.selected_file)
-        if len(message) > info['available_chars']:
-            messagebox.showerror("Error", f"Message too long! Maximum {info['available_chars']} characters allowed.")
-            return
-
         num_bits = int(self.bits_combobox.get())
         self.time_label.config(text="0.00 sec")
         self.show_loading("Encrypting...")
@@ -173,13 +171,13 @@ class SteganographyApp:
                 self.log(f"Mean sample difference: {stats['mean_diff']:.2f}")
                 self.log(f"SNR: {stats['snr']:.2f} dB")
                 self.log(f"Changed samples: {stats['changed_samples']} ({stats['changed_percent']:.2f}%)")
-                self.log(f"Quality assessment: {self.get_quality_assessment(stats['snr'], stats['changed_percent'])}")
+                self.log(f"Quality assessment: {self.get_quality_assessment(stats['snr'], stats['changed_percent'], num_bits)}")
 
                 info = get_wav_info(self.encoded_file)
                 self.log(f"Encrypted File Info: {os.path.basename(self.encoded_file)}")
                 self.log(f"  Samples: {info['total_samples']}")
                 self.log(f"  Bits: {info['total_bits']}")
-                self.log(f"  Available Characters: {info['available_chars']}")
+                self.log(f"  Available Characters (for {num_bits} bits): {stats['available_chars']}")
             except Exception as e:
                 self.log(f"Encryption Error: {e}")
             finally:
@@ -202,7 +200,7 @@ class SteganographyApp:
             start_time = time.time()
             try:
                 extracted = extract_message(self.encoded_file, num_bits)
-                self.log(f"Decrypted Message from {os.path.basename(self.encoded_file)}: {extracted}")
+                self.log(f"Decrypted Message from {os.path.basename(self.encoded_file)}: {extracted[:100]}...")
             except Exception as e:
                 self.log(f"Decryption Error: {e}")
             finally:
@@ -242,12 +240,13 @@ class SteganographyApp:
                 changed_samples = np.sum(samples_enc != samples_orig)
                 changed_percent = (changed_samples / len(samples_orig)) * 100 if len(samples_orig) > 0 else 0
 
+                num_bits = int(self.bits_combobox.get())
                 self.log(f"Analysis of {os.path.basename(self.selected_file)} vs {os.path.basename(self.encoded_file)}:")
                 self.log(f"  Max sample difference: {max_diff}")
                 self.log(f"  Mean sample difference: {mean_diff:.2f}")
                 self.log(f"  SNR: {snr:.2f} dB")
                 self.log(f"  Changed samples: {changed_samples} ({changed_percent:.2f}%)")
-                self.log(f"  Quality assessment: {self.get_quality_assessment(snr, changed_percent)}")
+                self.log(f"  Quality assessment: {self.get_quality_assessment(snr, changed_percent, num_bits)}")
             except Exception as e:
                 self.log(f"Analysis Error: {e}")
             finally:

@@ -53,8 +53,22 @@ class SteganographyApp:
 
         # Поле вывода логов
         ttk.Label(main_frame, text="Logs:").grid(row=6, column=0, sticky="w", pady=(10, 5))
-        self.log_text = tk.Text(main_frame, height=15, width=80, bg="#FFF8E7", fg="#4A4A4A", font=("Helvetica", 10), borderwidth=0, relief="flat")
+        self.log_text = tk.Text(main_frame, height=15, width=80, bg="#FFF8E7", fg="#4A4A4A", 
+                               font=("Helvetica", 10), borderwidth=0, relief="flat")
         self.log_text.grid(row=7, column=0, columnspan=3, sticky="nsew")
+        
+        # Настройка возможности копирования текста
+        self.log_text.configure(state="normal")  # Разрешаем редактирование для копирования
+        
+        # Добавляем контекстное меню для копирования
+        self.log_menu = tk.Menu(self.log_text, tearoff=0)
+        self.log_menu.add_command(label="Copy", command=lambda: self.copy_text())
+        self.log_text.bind("<Button-3>", self.show_context_menu)
+        
+        # Добавляем скроллбар для удобства
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=self.log_text.yview)
+        scrollbar.grid(row=7, column=3, sticky="ns")
+        self.log_text.configure(yscrollcommand=scrollbar.set)
 
         # Время выполнения
         ttk.Label(main_frame, text="Execution Time:").grid(row=8, column=0, sticky="w", pady=(10, 5))
@@ -86,8 +100,12 @@ class SteganographyApp:
         self.loading_window = None
 
     def log(self, message):
+        # Вывод в интерфейс
         self.log_text.insert(tk.END, f"{message}\n")
         self.log_text.see(tk.END)
+        
+        # Вывод в терминал
+        print(message)
 
     def show_loading(self, message):
         self.loading_window = tk.Toplevel(self.root)
@@ -259,6 +277,20 @@ class SteganographyApp:
     def clear_logs(self):
         self.log_text.delete(1.0, tk.END)
         self.time_label.config(text="0.00 sec")
+
+    def copy_text(self):
+        try:
+            selected_text = self.log_text.get("sel.first", "sel.last")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(selected_text)
+        except tk.TclError:
+            pass  # Если ничего не выделено, просто игнорируем
+
+    def show_context_menu(self, event):
+        try:
+            self.log_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.log_menu.grab_release()
 
 if __name__ == "__main__":
     root = tk.Tk()

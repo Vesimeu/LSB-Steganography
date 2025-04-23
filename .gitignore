@@ -6,6 +6,17 @@ __pycache__/
 # C extensions
 *.so
 
+#Text_input
+32000_chars.txt
+51000_chars.txt
+99000_chars.txt
+600000_chars.txt
+1227000_chars.txt
+2450000_chars.txt
+3680000_chars.txt
+7360000_chars.txt
+14722739_chars.txt
+template/text_incoding/
 # Distribution / packaging
 .Python
 build/
